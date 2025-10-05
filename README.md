@@ -1,44 +1,48 @@
-# VNGSS
-Vraudrak's Ngrok Site Server - A portable Python HTTP server that hosts a site locally from a  folder, optionally exposing it publicly via ngrok
+# VNSS
+Vraudrak's Ngrok Site Server - A portable Python HTTP server that hosts a site locally from a folder, optionally exposing it publicly via ngrok.
 
 # Vraudrak's ngrok Site Server - Usage Instructions
 -----------------------------------
 
 Folder Structure:
 
-/<SERVER_FOLDER>
-  /DOCS             <- All site files go here (index.html, uploads, etc.)
-  CONFIG            <- Store ngrok token and future configs
-  server.py         <- Main server script
-  TODO.txt          <- Optional: features to implement
+/<SERVER_FOLDER>  
+  /DOCS             <- All site files go here (index.html, uploads, etc.)  
+  CONFIG            <- Store ngrok token and future configs  
+  vngss.py          <- Main server script  
+  TODO.txt          <- Optional: features to implement  
 
 -----------------------------------
 How to Run the Server:
 
-1) Open a terminal and navigate to the folder containing server.py:
+1) Open a terminal and navigate to the folder containing vngss.py:  
    cd /path/to/<SERVER_FOLDER>
 
-2) Make sure Python 3 is installed:
-   python3 --version
+2) Make sure Python 3 is installed:  
+   python3 --version  
    (If not installed, install Python 3 for your OS.)
 
-3) Optional: Configure ngrok for public access:
-   - Download ngrok from https://ngrok.com/download
-   - Create or edit CONFIG
-   - Add your ngrok authtoken:
-     NGROK_AUTHTOKEN=YOUR_NGROK_AUTHTOKEN
+3) Optional: Configure ngrok for public access:  
+   - Download ngrok from https://ngrok.com/download  
+   - Create or edit CONFIG  
+   - Add your ngrok authtoken:  
+     NGROK_AUTHTOKEN=YOUR_NGROK_AUTHTOKEN  
    - If ngrok is configured, the script will start a public tunnel automatically.
 
-4) Start the server:
-   python3 server.py
+4) Start the server:  
+   python3 vngss.py  
+   You can also use extra options:  
+   --no-ngrok     disable ngrok  
+   --port 8080    set a custom port  
+   --dir ./mysite serve a different folder  
 
-5) Output:
-   - Local URL: The script will print the local address, e.g., http://127.0.0.1:PORT
-   - Public URL: If ngrok is configured, the public ngrok URL will be displayed.
+5) Output:  
+   - Local URL: The script will print the local address, e.g., http://127.0.0.1:PORT  
+   - Public URL: If ngrok is configured, the public ngrok URL will be displayed.  
 
-6) Stop the server:
-   Press Ctrl+C in the terminal to stop the Python server.
-   If ngrok is running, it will terminate automatically.
+6) Stop the server:  
+   Press Ctrl+C in the terminal to stop the Python server.  
+   If ngrok is running, it will terminate automatically.  
 
 -----------------------------------
 Notes:
@@ -46,5 +50,7 @@ Notes:
 - All site files should go inside the DOCS folder.  
 - Uploads or future password-protected storage can be added inside DOCS/uploads/.  
 - User accounts and other configs can be stored in CONFIG.  
-- The script automatically detects its folder location, so it can run from **any folder or drive**.  
-- Always back up CONFIG to keep ngrok token and other settings safe.
+- The script automatically detects its folder location, so it can run from any folder or drive.  
+- Always back up CONFIG to keep ngrok token and other settings safe.  
+- The new version uses a threaded HTTP server, so multiple users can access it at once without blocking.  
+- If ngrok isn’t found or fails, the server will automatically fall back to local-only mode.  

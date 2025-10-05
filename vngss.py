@@ -1,111 +1,137 @@
 #!/usr/bin/env python3
 import os
-import http.server
-import socketserver
-import socket
-import subprocess
 import sys
+import socket
+import signal
 import time
 import shutil
+import http.server
+import socketserver
+import subprocess
 import requests
+import argparse
+from pathlib import Path
 
-# --- Step 0: determine script folder ---
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# === CONFIG ===
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_SITE_DIR = SCRIPT_DIR / "DOCS"
+CONFIG_FILE = SCRIPT_DIR / "CONFIG"
 
-# --- CONFIG ---
-SITE_DIR = os.path.join(SCRIPT_DIR, "DOCS")  # All site files go here
-CONFIG_FILE = os.path.join(SCRIPT_DIR, "CONFIG")
+# === Quiet HTTP Handler ===
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
 
-# --- Step 1: ensure DOCS folder exists ---
-os.makedirs(SITE_DIR, exist_ok=True)
-
-# --- Step 2: create default index.html if missing ---
-index_file = os.path.join(SITE_DIR, "index.html")
-if not os.path.exists(index_file):
-    with open(index_file, "w") as f:
-        f.write("<h1>Hello World!</h1><p>This site is running via Python HTTP server!</p>")
-
-# --- Step 3: read ngrok token from CONFIG ---
-NGROK_AUTHTOKEN = None
-if os.path.exists(CONFIG_FILE):
-    with open(CONFIG_FILE, "r") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("NGROK_AUTHTOKEN="):
-                NGROK_AUTHTOKEN = line.split("=", 1)[1].strip()
-else:
-    # create empty config
-    with open(CONFIG_FILE, "w") as f:
-        f.write("# Add your NGROK_AUTHTOKEN below:\n")
-        f.write("NGROK_AUTHTOKEN=\n")
-    print(f"Created empty config file at {CONFIG_FILE}. Please add your NGROK_AUTHTOKEN before using ngrok.")
-
-# --- Step 4: find a free port ---
+# === Helpers ===
 def find_free_port():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(('', 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        return s.getsockname()[1]
 
-WEB_PORT = find_free_port()
+def setup_docs(site_dir: Path):
+    site_dir.mkdir(exist_ok=True)
+    index_file = site_dir / "index.html"
+    if not index_file.exists():
+        index_file.write_text("<h1>Hello World!</h1><p>Python HTTP server is running.</p>")
 
-# --- Step 5: check ngrok ---
-NGROK_AVAILABLE = shutil.which("ngrok") is not None
-if NGROK_AUTHTOKEN and NGROK_AVAILABLE:
-    # preconfigure ngrok
-    NGROK_CONFIG_DIR = os.path.expanduser("~/.ngrok2")
-    NGROK_CONFIG_FILE = os.path.join(NGROK_CONFIG_DIR, "ngrok.yml")
-    os.makedirs(NGROK_CONFIG_DIR, exist_ok=True)
-    if not os.path.exists(NGROK_CONFIG_FILE):
-        with open(NGROK_CONFIG_FILE, "w") as f:
-            f.write(f"authtoken: {NGROK_AUTHTOKEN}\n")
-        print("Ngrok config created with provided authtoken.")
+def read_token(config_file: Path):
+    if not config_file.exists():
+        config_file.write_text("# Add your NGROK_AUTHTOKEN below:\nNGROK_AUTHTOKEN=\n")
+        print(f"Created empty config file at {config_file}. Please add your NGROK_AUTHTOKEN.")
+        return None
 
-    # start ngrok tunnel
+    for line in config_file.read_text().splitlines():
+        if line.strip().startswith("NGROK_AUTHTOKEN="):
+            token = line.split("=", 1)[1].strip()
+            return token or None
+    return None
+
+def start_ngrok(port, token):
+    ngrok_cmd = shutil.which("ngrok") or shutil.which("/snap/bin/ngrok")
+    if not ngrok_cmd:
+        print("Ngrok not found.")
+        return None, None
+
+    if not token:
+        print("NGROK_AUTHTOKEN missing in CONFIG.")
+        return None, None
+
+    config_dir = Path.home() / ".ngrok2"
+    config_dir.mkdir(exist_ok=True)
+    config_file = config_dir / "ngrok.yml"
+    if not config_file.exists():
+        config_file.write_text(f"authtoken: {token}\n")
+
     print("Starting ngrok tunnel...")
     ngrok_process = subprocess.Popen(
-        ["ngrok", "http", str(WEB_PORT)],
+        [ngrok_cmd, "http", str(port)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
 
-    # wait for ngrok to initialize
     public_url = None
-    for _ in range(20):
+    for delay in [0.5, 1, 2, 3, 5]:
         try:
-            tunnel_info = requests.get("http://127.0.0.1:4040/api/tunnels").json()
-            if tunnel_info['tunnels']:
-                public_url = tunnel_info['tunnels'][0]['public_url']
+            info = requests.get("http://127.0.0.1:4040/api/tunnels", timeout=2).json()
+            tunnels = info.get("tunnels", [])
+            if tunnels:
+                public_url = tunnels[0].get("public_url")
                 break
-        except Exception:
-            pass
-        time.sleep(0.5)
+        except requests.RequestException:
+            time.sleep(delay)
+    return ngrok_process, public_url
 
-    if public_url:
-        print(f"Your site is publicly accessible via ngrok at: {public_url}")
-    else:
-        print("Could not retrieve ngrok URL. Make sure ngrok is running and try again.")
-else:
-    if not NGROK_AUTHTOKEN:
-        print("NGROK_AUTHTOKEN not set in CONFIG. Ngrok tunnel will not start.")
-    elif not NGROK_AVAILABLE:
-        print("Ngrok executable not found. Please install ngrok to use public tunnels.")
-
-# --- Step 6: start Python HTTP server ---
-os.chdir(SITE_DIR)
-Handler = http.server.SimpleHTTPRequestHandler
-HOST = "0.0.0.0"
-
-try:
-    with socketserver.TCPServer((HOST, WEB_PORT), Handler) as httpd:
-        print(f"Serving local site at http://127.0.0.1:{WEB_PORT}")
-        print("Press Ctrl+C to stop the server.")
+def serve_site(host, port, site_dir):
+    os.chdir(site_dir)
+    with socketserver.ThreadingTCPServer((host, port), QuietHandler) as httpd:
+        print(f"Serving locally → http://127.0.0.1:{port}")
+        print("Press Ctrl+C to stop.")
         httpd.serve_forever()
-except OSError as e:
-    print(f"Error starting server: {e}")
-finally:
-    if 'ngrok_process' in locals():
-        ngrok_process.terminate()
-        print("Ngrok tunnel terminated.")
-    print("Server stopped.")
+
+# === Main logic ===
+def main():
+    parser = argparse.ArgumentParser(description="VNGSS lightweight HTTP + ngrok server")
+    parser.add_argument("--dir", type=str, default=str(DEFAULT_SITE_DIR), help="Directory to serve")
+    parser.add_argument("--port", type=int, help="Port to use (default: auto)")
+    parser.add_argument("--no-ngrok", action="store_true", help="Disable ngrok tunnel")
+    args = parser.parse_args()
+
+    site_dir = Path(args.dir)
+    setup_docs(site_dir)
+    port = args.port or find_free_port()
+    token = read_token(CONFIG_FILE)
+    host = "0.0.0.0"
+
+    ngrok_process = None
+    public_url = None
+
+    def cleanup(signum=None, frame=None):
+        if ngrok_process and ngrok_process.poll() is None:
+            ngrok_process.terminate()
+            print("Ngrok tunnel terminated.")
+        print("Server stopped.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+
+    if not args.no_ngrok:
+        ngrok_process, public_url = start_ngrok(port, token)
+        if public_url:
+            print(f"Ngrok URL → {public_url}")
+        else:
+            print("Ngrok tunnel failed, continuing in local mode.")
+
+    print("\n=== VNGSS SERVER ===")
+    print(f"Serving: {site_dir}")
+    print(f"Port: {port}")
+    print(f"Ngrok: {'Enabled' if public_url else 'Disabled'}")
+    print("====================\n")
+
+    try:
+        serve_site(host, port, site_dir)
+    finally:
+        cleanup()
+
+if __name__ == "__main__":
+    main()
